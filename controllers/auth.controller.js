@@ -1,4 +1,5 @@
-// server/controllers/auth.controller.js
+// FILE: server/controllers/auth.controller.js  (FULL REPLACEMENT)
+// =======================================================
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import path from "path";
@@ -8,26 +9,67 @@ import { User } from "../models/user.model.js";
 import { signJwt } from "../utils/jwt.js";
 import { jsonError, pick } from "../utils/http.js";
 
+function headerValue(req, name) {
+  const v = req?.headers?.[name];
+  return Array.isArray(v) ? v[0] : v;
+}
+
 function isHttpsRequest(req) {
-  const xfProto = req?.headers?.["x-forwarded-proto"];
-  return Boolean(req?.secure || xfProto === "https");
+  if (req?.secure) return true;
+
+  const xfProto = String(headerValue(req, "x-forwarded-proto") || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+
+  return xfProto === "https";
 }
 
 /**
  * Cookie auth:
- * - http://localhost => secure=false, sameSite=lax
- * - https (prod)     => secure=true,  sameSite=none
+ * - In cross-site scenarios (Pages -> API domain), browsers require:
+ *   SameSite=None AND Secure=true
+ *
+ * Env overrides:
+ * - COOKIE_SAMESITE: "none" | "lax" | "strict"
+ * - COOKIE_SECURE: "true" | "false"
+ * - COOKIE_DOMAIN: e.g. ".example.com" (optional)
+ * - COOKIE_NAME: default "token"
+ * - COOKIE_MAX_DAYS: default 7
  */
 function cookieOptions(req) {
+  const inferredSecure = isHttpsRequest(req);
+
+  const secure =
+    process.env.COOKIE_SECURE != null
+      ? String(process.env.COOKIE_SECURE).toLowerCase() === "true"
+      : inferredSecure;
+
+  const sameSite =
+    process.env.COOKIE_SAMESITE != null
+      ? String(process.env.COOKIE_SAMESITE).toLowerCase()
+      : secure
+        ? "none"
+        : "lax";
+
+  const domain = process.env.COOKIE_DOMAIN ? String(process.env.COOKIE_DOMAIN) : undefined;
+
+  const maxDays = Number(process.env.COOKIE_MAX_DAYS || 7);
+  const maxAge = Number.isFinite(maxDays) ? maxDays * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+
   return {
     httpOnly: true,
-    secure: true,     // ✅ production on https
-    sameSite: "lax",  // ✅ first-party cookies (same site)
+    secure,
+    sameSite,
     path: "/",
-    maxAge: 1000 * 60 * 60 * 24 * 7,
+    maxAge,
+    ...(domain ? { domain } : {}),
   };
 }
 
+function cookieName() {
+  return process.env.COOKIE_NAME ? String(process.env.COOKIE_NAME) : "token";
+}
 
 function issueSession(req, res, user) {
   const token = signJwt(
@@ -36,22 +78,25 @@ function issueSession(req, res, user) {
     process.env.JWT_EXPIRES_IN || "7d"
   );
 
-  res.cookie("token", token, cookieOptions(req));
+  res.cookie(cookieName(), token, cookieOptions(req));
 }
 
 function clearAuthCookies(req, res) {
   const opts = cookieOptions(req);
 
+  // clearCookie must match key cookie attributes (path/domain/samesite/secure)
   const clearOpts = {
     httpOnly: true,
     secure: opts.secure,
     sameSite: opts.sameSite,
     path: opts.path,
+    ...(opts.domain ? { domain: opts.domain } : {}),
   };
 
-  res.clearCookie("token", clearOpts);
+  res.clearCookie(cookieName(), clearOpts);
 
   // Optional legacy names (safe even if unused)
+  res.clearCookie("token", clearOpts);
   res.clearCookie("auth_token", clearOpts);
   res.clearCookie("access_token", clearOpts);
   res.clearCookie("refresh_token", clearOpts);
@@ -160,4 +205,5 @@ export async function uploadAvatar(req, res) {
 
   return res.json({ url });
 }
+
 
