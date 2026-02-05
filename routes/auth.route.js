@@ -42,7 +42,8 @@ router.post("/register", register);
 router.post("/login", login);
 router.post("/logout", logout);
 
-router.get("/me", optionalAuth, me);
+router.get("/me", requireAuth.optional, me);
+
 
 router.patch("/profile", requireAuth, updateProfile);
 router.post("/avatar", requireAuth, avatarUpload.single("avatar"), uploadAvatar);
