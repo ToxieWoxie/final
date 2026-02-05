@@ -27,15 +27,14 @@ function isHttpsRequest(req) {
 
 /**
  * Cookie auth:
- * - In cross-site scenarios (Pages -> API domain), browsers require:
- *   SameSite=None AND Secure=true
+ * - http://localhost => secure=false, sameSite=lax
+ * - https (prod)     => secure=true,  sameSite=none
  *
- * Env overrides:
- * - COOKIE_SAMESITE: "none" | "lax" | "strict"
- * - COOKIE_SECURE: "true" | "false"
- * - COOKIE_DOMAIN: e.g. ".example.com" (optional)
- * - COOKIE_NAME: default "token"
- * - COOKIE_MAX_DAYS: default 7
+ * Optional env overrides:
+ * - COOKIE_SECURE=true/false
+ * - COOKIE_SAMESITE=none/lax/strict
+ * - COOKIE_DOMAIN=.example.com
+ * - COOKIE_NAME=token
  */
 function cookieOptions(req) {
   const inferredSecure = isHttpsRequest(req);
@@ -54,15 +53,12 @@ function cookieOptions(req) {
 
   const domain = process.env.COOKIE_DOMAIN ? String(process.env.COOKIE_DOMAIN) : undefined;
 
-  const maxDays = Number(process.env.COOKIE_MAX_DAYS || 7);
-  const maxAge = Number.isFinite(maxDays) ? maxDays * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
-
   return {
     httpOnly: true,
     secure,
     sameSite,
     path: "/",
-    maxAge,
+    maxAge: 1000 * 60 * 60 * 24 * 7,
     ...(domain ? { domain } : {}),
   };
 }
@@ -84,7 +80,6 @@ function issueSession(req, res, user) {
 function clearAuthCookies(req, res) {
   const opts = cookieOptions(req);
 
-  // clearCookie must match key cookie attributes (path/domain/samesite/secure)
   const clearOpts = {
     httpOnly: true,
     secure: opts.secure,
@@ -119,6 +114,7 @@ export async function register(req, res) {
   if (existingUsername) return jsonError(res, 409, "username_taken", "Username is already taken.");
 
   const passwordHash = await bcrypt.hash(String(password), 12);
+
   const user = await User.create({
     email: normalizedEmail,
     username: normalizedUsername,
@@ -134,8 +130,23 @@ export async function login(req, res) {
   const { email, password } = req.body || {};
   if (!email || !password) return jsonError(res, 400, "bad_request", "Email and password are required.");
 
-  const user = await User.findOne({ email: String(email).toLowerCase().trim() });
+  const normalizedEmail = String(email).toLowerCase().trim();
+
+  // ✅ CRITICAL FIX:
+  // If your schema sets `passwordHash: { select: false }`, this ensures it is returned.
+  const user = await User.findOne({ email: normalizedEmail }).select("+passwordHash");
+
   if (!user) return jsonError(res, 401, "invalid_credentials", "Invalid email or password.");
+
+  // ✅ Fail loudly if model/schema is misconfigured (prevents endless 401 confusion)
+  if (!user.passwordHash) {
+    return jsonError(
+      res,
+      500,
+      "server_misconfig",
+      "User record has no passwordHash. Check your User schema field name and/or select:false configuration."
+    );
+  }
 
   const ok = await bcrypt.compare(String(password), user.passwordHash);
   if (!ok) return jsonError(res, 401, "invalid_credentials", "Invalid email or password.");
@@ -205,5 +216,4 @@ export async function uploadAvatar(req, res) {
 
   return res.json({ url });
 }
-
 
