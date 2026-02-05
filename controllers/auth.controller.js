@@ -19,16 +19,15 @@ function isHttpsRequest(req) {
  * - https (prod)     => secure=true,  sameSite=none
  */
 function cookieOptions(req) {
-  const isHttps = isHttpsRequest(req);
-
   return {
     httpOnly: true,
-    secure: isHttps,
-    sameSite: isHttps ? "none" : "lax",
+    secure: true,     // ✅ production on https
+    sameSite: "lax",  // ✅ first-party cookies (same site)
     path: "/",
     maxAge: 1000 * 60 * 60 * 24 * 7,
   };
 }
+
 
 function issueSession(req, res, user) {
   const token = signJwt(
