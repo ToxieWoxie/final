@@ -35,6 +35,7 @@ function isHttpsRequest(req) {
  * - COOKIE_SAMESITE=none/lax/strict
  * - COOKIE_DOMAIN=.example.com
  * - COOKIE_NAME=token
+ * - COOKIE_MAX_DAYS=7
  */
 function cookieOptions(req) {
   const inferredSecure = isHttpsRequest(req);
@@ -53,12 +54,15 @@ function cookieOptions(req) {
 
   const domain = process.env.COOKIE_DOMAIN ? String(process.env.COOKIE_DOMAIN) : undefined;
 
+  const maxDaysRaw = Number(process.env.COOKIE_MAX_DAYS || 7);
+  const maxDays = Number.isFinite(maxDaysRaw) && maxDaysRaw > 0 ? maxDaysRaw : 7;
+
   return {
     httpOnly: true,
     secure,
     sameSite,
     path: "/",
-    maxAge: 1000 * 60 * 60 * 24 * 7,
+    maxAge: maxDays * 24 * 60 * 60 * 1000,
     ...(domain ? { domain } : {}),
   };
 }
@@ -126,30 +130,38 @@ export async function register(req, res) {
   return res.json({ user: user.toAuthJSON() });
 }
 
+/**
+ * ✅ FIX: login accepts email OR username (or identifier),
+ * which prevents the "signup works but login always 401" bug when the frontend
+ * accidentally sends username in the email field (or uses username UX).
+ */
 export async function login(req, res) {
-  const { email, password } = req.body || {};
-  if (!email || !password) return jsonError(res, 400, "bad_request", "Email and password are required.");
+  const { email, password, username, identifier } = req.body || {};
 
-  const normalizedEmail = String(email).toLowerCase().trim();
+  const rawId = identifier ?? email ?? username;
+  if (!rawId || !password) {
+    return jsonError(res, 400, "bad_request", "Email/username and password are required.");
+  }
 
-  // ✅ CRITICAL FIX:
-  // If your schema sets `passwordHash: { select: false }`, this ensures it is returned.
-  const user = await User.findOne({ email: normalizedEmail }).select("+passwordHash");
+  const id = String(rawId).trim();
+  const idLower = id.toLowerCase();
 
-  if (!user) return jsonError(res, 401, "invalid_credentials", "Invalid email or password.");
+  const query = idLower.includes("@") ? { email: idLower } : { usernameLower: idLower };
 
-  // ✅ Fail loudly if model/schema is misconfigured (prevents endless 401 confusion)
+  const user = await User.findOne(query);
+  if (!user) return jsonError(res, 401, "invalid_credentials", "Invalid email/username or password.");
+
   if (!user.passwordHash) {
     return jsonError(
       res,
       500,
       "server_misconfig",
-      "User record has no passwordHash. Check your User schema field name and/or select:false configuration."
+      "User record has no passwordHash. Check User model field naming and registration."
     );
   }
 
   const ok = await bcrypt.compare(String(password), user.passwordHash);
-  if (!ok) return jsonError(res, 401, "invalid_credentials", "Invalid email or password.");
+  if (!ok) return jsonError(res, 401, "invalid_credentials", "Invalid email/username or password.");
 
   issueSession(req, res, user);
   return res.json({ user: user.toAuthJSON() });
