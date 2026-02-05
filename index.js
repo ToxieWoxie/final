@@ -34,6 +34,8 @@ await mongoose.connect(MONGO_URI);
 console.log("MongoDB connected");
 
 const app = express();
+app.set("trust proxy", 1);
+
 
 // Helmet defaults CORP=same-origin. We'll override CORP for /uploads below.
 app.use(helmet());
@@ -44,16 +46,8 @@ app.use(cookieParser());
 
 const frontendUrl = process.env.FRONTEND_URL || "http://localhost:8081";
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      const allowed = new Set([frontendUrl]);
-      return allowed.has(origin) ? cb(null, true) : cb(new Error(`CORS blocked origin: ${origin}`));
-    },
-    credentials: true,
-  })
-);
+app.use(cors({ credentials: true, origin: true }));
+
 
 app.use(
   rateLimit({
