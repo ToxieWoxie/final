@@ -74,7 +74,8 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // critical for preflight
+app.options(/.*/, cors(corsOptions));
+
 
 // Ensure caches/proxies don't mix CORS responses across different origins
 app.use((req, res, next) => {
