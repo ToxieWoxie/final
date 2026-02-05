@@ -202,7 +202,7 @@ app.use("/api/users", userRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 3001);
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
   console.log("NODE_ENV:", NODE_ENV);
