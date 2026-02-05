@@ -43,9 +43,10 @@ app.use(cookieParser());
 
 /**
  * CORS FIX:
- * - Use an explicit allowlist (supports multiple origins via comma-separated env)
- * - Return Access-Control-Allow-Origin for allowed origins
- * - Enable credentials + preflight for cookies/session auth
+ * - Explicit allowlist (comma-separated env)
+ * - Correct preflight handling
+ * - Correct credentialed CORS (no wildcard origin)
+ * - Prevent caches mixing responses across origins (Vary: Origin)
  */
 const allowedOrigins = new Set(
   (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || "http://localhost:8081")
@@ -56,7 +57,7 @@ const allowedOrigins = new Set(
 
 const corsOptions = {
   origin(origin, callback) {
-    // Allow same-origin / server-to-server / curl (no Origin header)
+    // Allow non-browser / server-to-server / curl (no Origin header)
     if (!origin) return callback(null, true);
 
     if (allowedOrigins.has(origin)) return callback(null, true);
@@ -66,10 +67,23 @@ const corsOptions = {
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
+  // If you need the browser to read any custom response headers:
+  exposedHeaders: ["Set-Cookie"],
+  optionsSuccessStatus: 204,
+  preflightContinue: false,
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
+app.options("*", cors(corsOptions)); // critical for preflight
+
+// Ensure caches/proxies don't mix CORS responses across different origins
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.has(origin)) {
+    res.setHeader("Vary", "Origin");
+  }
+  next();
+});
 
 app.use(
   rateLimit({
@@ -101,6 +115,9 @@ app.use(
       res.setHeader("Vary", "Origin");
     }
 
+    // Optional: allow range requests for audio/video seeking
+    res.setHeader("Accept-Ranges", "bytes");
+
     next();
   },
   express.static(path.join(__dirname, "uploads"))
@@ -122,4 +139,3 @@ app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
   console.log("CORS allowed origins:", [...allowedOrigins]);
 });
-;
